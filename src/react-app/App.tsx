@@ -91,9 +91,9 @@ export function App() {
         {!status && !error && <div className="monitor-card skeleton" />}
       </section>
 
-      <footer>
+      <SiteFooter>
         Updated {status ? relativeTime(status.generatedAt) : "just now"} · status page refreshes every minute
-      </footer>
+      </SiteFooter>
     </main>
   );
 }
@@ -205,6 +205,7 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
           {message && <div className="notice error">{message}</div>}
           <button className="text-button back-button" onClick={onClose}>← Public status</button>
         </section>
+        <SiteFooter />
       </main>
     );
   }
@@ -244,6 +245,8 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
         <div><h2>Admin activity</h2><div className="activity-card">{logs.slice(0, 8).map((log) => <div className="activity-row" key={log.id}><span className="activity-mark" /><div><strong>{humanAction(log.action)}</strong><span>{relativeTime(log.createdAt)}</span></div></div>)}{logs.length === 0 && <p className="muted">No activity recorded.</p>}</div></div>
       </section>
 
+      <SiteFooter />
+
       {editing && <MonitorDialog monitor={editing === "new" ? null : editing} busy={busy} onClose={() => setEditing(null)} onSave={(input) => void (async () => {
         const saved = await act(
           () => request(editing === "new" ? "/api/admin/monitors" : `/api/admin/monitors/${editing.id}`, { method: editing === "new" ? "POST" : "PUT", body: JSON.stringify(input) }),
@@ -252,6 +255,18 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
         if (saved) setEditing(null);
       })()} />}
     </main>
+  );
+}
+
+function SiteFooter({ children }: { children?: React.ReactNode }) {
+  return (
+    <footer className="site-footer">
+      {children && <p>{children}</p>}
+      <p>
+        Built with <span className="footer-heart" aria-label="love">❤️</span> by{" "}
+        <a href="https://github.com/wilspi/uptime-pulse" target="_blank" rel="noreferrer">@wilspi</a>
+      </p>
+    </footer>
   );
 }
 

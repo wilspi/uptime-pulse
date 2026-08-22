@@ -226,6 +226,7 @@ app.post("/api/admin/smtp/test", async (c) => {
 
   try {
     await sendSmtpMail(c.env, {
+      kind: "test",
       subject: `[${c.env.SITE_NAME}] SMTP test successful`,
       body: [
         `This is a test notification from ${c.env.SITE_NAME}.`,

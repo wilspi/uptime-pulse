@@ -41,7 +41,12 @@ h1, h2, p { margin-top: 0; }
 .monitor-error { margin: 14px 0 0; color: #ef999e; font-size: 12px; }
 .empty-state { padding: 48px; text-align: center; color: #859e94; } .empty-state h2 { margin-bottom: 6px; color: #dbe7e2; }
 .skeleton { height: 160px; opacity: .5; animation: pulse 1.8s infinite; } @keyframes pulse { 50% { opacity: .25; } }
-footer { padding: 34px 0 48px; color: #577066; text-align: center; font-size: 11px; }
+.site-footer { display: grid; gap: 7px; padding: 34px 0 48px; color: #577066; text-align: center; font-size: 11px; }
+.site-footer p { margin: 0; }
+.site-footer a { color: #88aa9d; font-weight: 700; text-decoration: none; transition: color .18s ease; }
+.site-footer a:hover { color: #60dba3; }
+.site-footer a:focus-visible { border-radius: 3px; outline: 2px solid #60dba3; outline-offset: 3px; }
+.footer-heart { display: inline-block; filter: saturate(.85); transform: translateY(1px); }
 .notice { margin: 0 0 16px; padding: 12px 15px; border: 1px solid #2d5b49; border-radius: 10px; color: #9de7c7; background: #10291f; font-size: 13px; }
 .notice.error { border-color: #6c3035; color: #f0a7ac; background: #2c171a; }
 .admin-shell { width: min(1120px, calc(100% - 32px)); }

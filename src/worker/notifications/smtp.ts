@@ -5,8 +5,15 @@ const COMMAND_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 32 * 1024;
 
 export interface MailMessage {
+  kind: "down" | "recovered" | "test";
   subject: string;
   body: string;
+}
+
+interface MailEnvironment {
+  SITE_NAME: string;
+  SMTP_FROM: string;
+  SMTP_TO: string;
 }
 
 interface SmtpResponse {
@@ -83,7 +90,7 @@ export async function sendSmtpMail(env: Env, message: MailMessage): Promise<void
     await channel.command(`MAIL FROM:<${env.SMTP_FROM}>`, [250]);
     await channel.command(`RCPT TO:<${env.SMTP_TO}>`, [250, 251]);
     await channel.command("DATA", [354]);
-    await channel.write(`${buildMessage(env, message)}\r\n.\r\n`);
+    await channel.write(`${buildMimeMessage(env, message)}\r\n.\r\n`);
     await channel.expect([250]);
     await channel.command("QUIT", [221]);
   } catch (error) {
@@ -224,10 +231,19 @@ async function authenticate(
   await channel.command(base64Utf8(password), [235]);
 }
 
-function buildMessage(env: Env, message: MailMessage): string {
+export function buildMimeMessage(env: MailEnvironment, message: MailMessage): string {
   const subject = encodeHeader(message.subject);
-  const body = wrapBase64(base64Utf8(normalizeBody(message.body)));
+  const plainText = [
+    normalizeBody(message.body),
+    "",
+    "---",
+    "Built with ❤️ by @wilspi",
+    "https://github.com/wilspi/uptime-pulse",
+  ].join("\r\n");
+  const plainBody = wrapBase64(base64Utf8(plainText));
+  const htmlBody = wrapBase64(base64Utf8(renderEmailHtml(env.SITE_NAME, message)));
   const messageId = `<${crypto.randomUUID()}@${messageIdDomain(env.SMTP_FROM)}>`;
+  const boundary = `pulse-${crypto.randomUUID()}`;
 
   return [
     `Date: ${new Date().toUTCString()}`,
@@ -236,14 +252,159 @@ function buildMessage(env: Env, message: MailMessage): string {
     `To: ${env.SMTP_TO}`,
     `Subject: ${subject}`,
     "MIME-Version: 1.0",
-    'Content-Type: text/plain; charset="UTF-8"',
-    "Content-Transfer-Encoding: base64",
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
     "Auto-Submitted: auto-generated",
     "",
-    body,
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    plainBody,
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    htmlBody,
+    `--${boundary}--`,
   ]
+    .flatMap((part) => part.split("\r\n"))
     .map(dotStuff)
     .join("\r\n");
+}
+
+function renderEmailHtml(siteName: string, message: MailMessage): string {
+  const themes = {
+    down: {
+      accent: "#e11d48",
+      soft: "#fff1f2",
+      border: "#fecdd3",
+      label: "Incident alert",
+      icon: "!",
+    },
+    recovered: {
+      accent: "#059669",
+      soft: "#ecfdf5",
+      border: "#a7f3d0",
+      label: "Service recovered",
+      icon: "✓",
+    },
+    test: {
+      accent: "#2563eb",
+      soft: "#eff6ff",
+      border: "#bfdbfe",
+      label: "Email test",
+      icon: "✓",
+    },
+  } as const;
+  const theme = themes[message.kind];
+  const lines = message.body.replace(/\r\n/g, "\n").split("\n");
+  const summaryIndex = lines.findIndex((line) => line.trim());
+  const summary = summaryIndex >= 0 ? lines[summaryIndex].trim() : message.subject;
+  const detailRows = lines
+    .slice(summaryIndex + 1)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const separator = line.indexOf(":");
+      if (separator <= 0) return { label: "Details", value: line };
+      return {
+        label: line.slice(0, separator).trim(),
+        value: line.slice(separator + 1).trim(),
+      };
+    });
+  const titlePrefix = `[${siteName}] `;
+  const title = message.subject.startsWith(titlePrefix)
+    ? message.subject.slice(titlePrefix.length)
+    : message.subject;
+  const rows = detailRows
+    .map(({ label, value }, index) => {
+      const borderTop = index === 0 ? "" : "border-top:1px solid #e7eee9;";
+      return `<tr>
+        <td style="${borderTop}padding:14px 16px;color:#64756e;font-size:12px;font-weight:700;line-height:18px;text-transform:uppercase;letter-spacing:.06em;width:34%;vertical-align:top;">${escapeHtml(label)}</td>
+        <td style="${borderTop}padding:14px 16px;color:#17251f;font-size:14px;font-weight:600;line-height:20px;word-break:break-word;vertical-align:top;">${renderDetailValue(label, value, theme.accent)}</td>
+      </tr>`;
+    })
+    .join("");
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light only">
+  <title>${escapeHtml(message.subject)}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#edf3ef;color:#17251f;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${escapeHtml(summary)}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background-color:#edf3ef;">
+    <tr>
+      <td align="center" style="padding:40px 16px;">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;border:1px solid #dbe6df;border-radius:18px;box-shadow:0 12px 36px rgba(16,42,31,.10);overflow:hidden;">
+          <tr>
+            <td style="padding:22px 26px;background-color:#0a2118;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="color:#f5fbf7;font-size:17px;font-weight:750;letter-spacing:-.02em;">
+                    <span style="display:inline-block;width:10px;height:10px;margin-right:10px;border-radius:50%;background-color:#4ee3a2;box-shadow:0 0 12px rgba(78,227,162,.75);vertical-align:1px;"></span>${escapeHtml(siteName)}
+                  </td>
+                  <td align="right" style="color:#8db2a2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;">Uptime alert</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:34px 28px 26px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center" style="width:38px;height:38px;border-radius:50%;background-color:${theme.soft};border:1px solid ${theme.border};color:${theme.accent};font-size:19px;font-weight:800;">${theme.icon}</td>
+                  <td style="padding-left:13px;color:${theme.accent};font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.11em;">${theme.label}</td>
+                </tr>
+              </table>
+              <h1 style="margin:22px 0 10px;color:#10231a;font-size:28px;line-height:35px;font-weight:780;letter-spacing:-.035em;">${escapeHtml(title)}</h1>
+              <p style="margin:0;color:#5f7169;font-size:15px;line-height:24px;">${escapeHtml(summary)}</p>
+            </td>
+          </tr>
+          ${rows ? `<tr><td style="padding:0 28px 32px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background-color:#f7faf8;border:1px solid #e0e9e4;border-radius:12px;">${rows}</table></td></tr>` : ""}
+          <tr>
+            <td style="padding:22px 28px;background-color:#f7faf8;border-top:1px solid #e2ebe6;text-align:center;">
+              <p style="margin:0 0 7px;color:#829189;font-size:11px;line-height:17px;">This is an automated notification from ${escapeHtml(siteName)}.</p>
+              <p style="margin:0;color:#7a8d83;font-size:12px;line-height:18px;">Built with <span style="color:#e11d48;">&#10084;&#65039;</span> by <a href="https://github.com/wilspi/uptime-pulse" style="color:#187c58;font-weight:700;text-decoration:none;">@wilspi</a></p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+function renderDetailValue(label: string, value: string, accent: string): string {
+  if (label.toLowerCase() === "url") {
+    try {
+      const url = new URL(value);
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        const escaped = escapeHtml(url.toString());
+        return `<a href="${escaped}" style="color:${accent};text-decoration:underline;">${escapeHtml(value)}</a>`;
+      }
+    } catch {
+      // Fall through to safely escaped text.
+    }
+  }
+  return escapeHtml(value);
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return entities[character];
+  });
 }
 
 function validateHostname(value: string): string {
@@ -276,7 +437,7 @@ function dotStuff(line: string): string {
 }
 
 function messageIdDomain(address: string): string {
-    const domain = address.split("@")[1];
+  const domain = address.split("@")[1];
   return domain && /^[a-z0-9.-]+$/i.test(domain) ? domain : "pulse.local";
 }
 

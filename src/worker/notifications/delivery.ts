@@ -33,6 +33,7 @@ async function deliverNotification(
 ): Promise<void> {
   try {
     await sendSmtpMail(env, {
+      kind: notification.kind,
       subject: notification.subject,
       body: notification.body,
     });
