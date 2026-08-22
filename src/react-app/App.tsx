@@ -103,9 +103,12 @@ function MonitorCard({ monitor }: { monitor: PublicMonitor }) {
   return (
     <article className="monitor-card">
       <div className="monitor-heading">
-        <div>
-          <h2>{monitor.name}</h2>
-          <p>{safeHost(monitor.url)}</p>
+        <div className="monitor-heading-main">
+          <ServiceIcon name={monitor.name} url={monitor.url} />
+          <div>
+            <h2>{monitor.name}</h2>
+            <p>{safeHost(monitor.url)}</p>
+          </div>
         </div>
         <StatusBadge status={monitor.status} />
       </div>
@@ -225,7 +228,7 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
       <section className="admin-list">
         {monitors.map((monitor) => (
           <article className="admin-row" key={monitor.id}>
-            <div className="row-status"><span className={`status-dot ${statusTone(monitor.status)}`} /><div><strong>{monitor.name}</strong><span>{monitor.url}</span></div></div>
+            <div className="row-status"><ServiceIcon name={monitor.name} url={monitor.url} compact /><span className={`status-dot ${statusTone(monitor.status)}`} /><div><strong>{monitor.name}</strong><span>{monitor.url}</span></div></div>
             <StatusBadge status={monitor.status} />
             <span className="hide-mobile">Every {monitor.intervalSeconds === 60 ? "minute" : `${monitor.intervalSeconds / 60} min`}</span>
             <div className="row-actions">
@@ -270,6 +273,26 @@ function SiteFooter({ children }: { children?: React.ReactNode }) {
   );
 }
 
+function ServiceIcon({ name, url, compact = false }: { name: string; url: string; compact?: boolean }) {
+  const favicon = faviconUrl(url);
+  return (
+    <span className={`service-icon${compact ? " compact" : ""}`} aria-hidden="true">
+      <span>{name.trim().charAt(0).toUpperCase() || "•"}</span>
+      {favicon && (
+        <img
+          src={favicon}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          fetchPriority="low"
+          referrerPolicy="no-referrer"
+          onError={(event) => { event.currentTarget.hidden = true; }}
+        />
+      )}
+    </span>
+  );
+}
+
 function MonitorDialog({ monitor, busy, onClose, onSave }: { monitor: AdminMonitor | null; busy: boolean; onClose: () => void; onSave: (input: MonitorInput) => void }) {
   const [form, setForm] = useState<MonitorInput>(monitor ?? emptyMonitor);
   const field = <K extends keyof MonitorInput>(key: K, value: MonitorInput[K]) => setForm((current) => ({ ...current, [key]: value }));
@@ -303,5 +326,6 @@ function statusLabel(status: MonitorStatus): string { return status.charAt(0).to
 function overallMessage(status?: MonitorStatus): string { if (status === "up") return "All systems operational"; if (status === "down") return "Some systems are unavailable"; if (status === "verifying" || status === "recovering") return "We’re verifying service health"; if (status === "paused") return "Monitoring is paused"; return "Waiting for first checks"; }
 function formatUptime(value: number | null): string { return value === null ? "—" : `${value.toFixed(value >= 99 ? 3 : 2)}%`; }
 function safeHost(value: string): string { try { return new URL(value).host; } catch { return value; } }
+function faviconUrl(value: string): string | null { try { return `${new URL(value).origin}/favicon.ico`; } catch { return null; } }
 function humanAction(value: string): string { return value.split(".").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" · "); }
 function relativeTime(timestamp: number): string { const seconds = Math.max(0, Math.floor(Date.now() / 1000) - timestamp); if (seconds < 60) return "just now"; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ago`; return `${Math.floor(seconds / 86_400)}d ago`; }
