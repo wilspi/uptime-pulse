@@ -40,7 +40,7 @@ export function App() {
 
   useEffect(() => {
     void loadStatus();
-    const timer = window.setInterval(() => void loadStatus(), 30_000);
+    const timer = window.setInterval(() => void loadStatus(), 60_000);
     return () => window.clearInterval(timer);
   }, [loadStatus]);
 
@@ -92,7 +92,7 @@ export function App() {
       </section>
 
       <footer>
-        Updated {status ? relativeTime(status.generatedAt) : "just now"} · checks refresh every 30 seconds
+        Updated {status ? relativeTime(status.generatedAt) : "just now"} · status page refreshes every minute
       </footer>
     </main>
   );
@@ -274,7 +274,7 @@ function MonitorDialog({ monitor, busy, onClose, onSave }: { monitor: AdminMonit
             <label>Timeout (ms)<input type="number" min="1000" max="30000" step="1000" value={form.timeoutMs} onChange={(e) => field("timeoutMs", Number(e.target.value))} /></label>
             <label className="wide">Expected text <span>(optional, GET only)</span><input maxLength={200} value={form.expectedKeyword ?? ""} onChange={(e) => field("expectedKeyword", e.target.value || null)} placeholder="healthy" /></label>
           </div>
-          <div className="check-row"><label><input type="checkbox" checked={form.followRedirects} onChange={(e) => field("followRedirects", e.target.checked)} /> Follow redirects</label><label><input type="checkbox" checked={form.paused} onChange={(e) => field("paused", e.target.checked)} /> Paused</label></div>
+          <div className="check-row"><label title="Each redirect hop makes another HTTP request. Save the final URL to avoid the extra request."><input type="checkbox" checked={form.followRedirects} onChange={(e) => field("followRedirects", e.target.checked)} /> Follow redirects (one request per hop)</label><label><input type="checkbox" checked={form.paused} onChange={(e) => field("paused", e.target.checked)} /> Paused</label></div>
           <div className="modal-actions"><button className="secondary-button" type="button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy} type="submit">{busy ? "Saving…" : "Save monitor"}</button></div>
         </form>
       </section>
