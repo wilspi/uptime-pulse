@@ -30,7 +30,7 @@ export function isSmtpConfigured(env: Env): boolean {
   const port = Number(env.SMTP_PORT);
   return (
     env.SMTP_HOST.trim().length > 0 &&
-    env.SMTP_HOST !== "smtp.example.com" &&
+    env.SMTP_HOST.trim().toLowerCase() !== "smtp.example.com" &&
     (port === 465 || port === 587) &&
     env.SMTP_USERNAME.length > 0 &&
     env.SMTP_PASSWORD.length > 0 &&

@@ -1,4 +1,4 @@
-# Pulse
+# Uptime Pulse
 
 A small, self-hosted HTTP uptime monitor built for the Cloudflare Workers. It includes a public status page, a token-protected admin dashboard, D1 history, one-minute Cron checks, and direct SMTP alerts over TLS.
 
@@ -15,7 +15,7 @@ The public API exposes only an endpoint's origin, never its path, query string, 
 
 ## Reliability model
 
-No single-location uptime monitor can promise zero false positives. Pulse is deliberately conservative:
+No single-location uptime monitor can promise zero false positives. Uptime Pulse is deliberately conservative:
 
 - Three consecutive failures confirm an outage and open an incident.
 - Two consecutive successes confirm recovery.
@@ -50,20 +50,17 @@ npm run dev
 Edit `.dev.vars` with development-only values:
 
 ```dotenv
+SITE_NAME="Uptime Pulse"
+SMTP_HOST="smtp.example.com"
+SMTP_PORT="465"
+SMTP_FROM="alerts@example.com"
+SMTP_TO="you@example.com"
 ADMIN_TOKEN="use-a-long-random-value"
 SMTP_USERNAME="your-smtp-username"
 SMTP_PASSWORD="your-smtp-password"
 ```
 
-Also update the non-secret SMTP settings in `wrangler.jsonc`:
-
-- `SITE_NAME`
-- `SMTP_HOST`
-- `SMTP_PORT` (`465` for implicit TLS or `587` for STARTTLS)
-- `SMTP_FROM`
-- `SMTP_TO`
-
-The SMTP server must support authenticated `AUTH PLAIN` or `AUTH LOGIN`. Cloudflare blocks outbound port 25, so it is intentionally unsupported. Your provider may still charge for mail; Pulse itself does not require Cloudflare Email Sending.
+The SMTP server must support authenticated `AUTH PLAIN` or `AUTH LOGIN`. Cloudflare blocks outbound port 25, so it is intentionally unsupported. Your provider may still charge for mail; Uptime Pulse itself does not require Cloudflare Email Sending.
 
 Run all checks with:
 
@@ -73,19 +70,16 @@ npm run check
 
 ## Deploy
 
-Authenticate and create the D1 database:
+Authenticate with Cloudflare:
 
 ```sh
 npx wrangler login
-npx wrangler d1 create uptime-monitoring
 ```
 
-Copy the `database_id` printed by Wrangler into the existing `DB` entry in `wrangler.jsonc`. Then configure the three encrypted Worker secrets:
+The D1 binding intentionally omits `database_id`; current Wrangler versions automatically provision and retain the binding without requiring an account-specific ID in Git. Upload the ignored `.dev.vars` values as encrypted Worker secrets:
 
 ```sh
-npx wrangler secret put ADMIN_TOKEN
-npx wrangler secret put SMTP_USERNAME
-npx wrangler secret put SMTP_PASSWORD
+npx wrangler secret bulk .dev.vars
 ```
 
 Use a generated admin token of at least 32 random bytes. Apply the schema and deploy:
@@ -95,11 +89,11 @@ npm run db:migrate:remote
 npm run deploy
 ```
 
-The Cron trigger is declared in `wrangler.jsonc`, so deployment installs the one-minute schedule. Open `https://uptime-monitoring.<your-subdomain>.workers.dev/#admin` and enter the admin token to add the first monitor.
+The Cron trigger is declared in `wrangler.jsonc`, so deployment installs the one-minute schedule. Open `https://uptime-pulse.<your-subdomain>.workers.dev/#admin` and enter the admin token to add the first monitor.
 
 ### Custom domain
 
-In the Cloudflare dashboard, open **Workers & Pages → uptime-monitoring → Settings → Domains & Routes → Add → Custom Domain** and choose a hostname in a zone on the same account, such as `status.example.com`. Cloudflare provisions and renews TLS automatically.
+In the Cloudflare dashboard, open **Workers & Pages → uptime-pulse → Settings → Domains & Routes → Add → Custom Domain** and choose a hostname in a zone on the same account, such as `status.example.com`. Cloudflare provisions and renews TLS automatically.
 
 ## SMTP choices
 

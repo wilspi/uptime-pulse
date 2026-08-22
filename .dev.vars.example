@@ -1,4 +1,9 @@
 # Copy this file to .dev.vars and replace every value.
+SITE_NAME="Uptime Pulse"
+SMTP_HOST="smtp.example.com"
+SMTP_PORT="465"
+SMTP_FROM="alerts@example.com"
+SMTP_TO="you@example.com"
 ADMIN_TOKEN="replace-with-a-long-random-token"
 SMTP_USERNAME="you@example.com"
 SMTP_PASSWORD="replace-with-an-app-password"

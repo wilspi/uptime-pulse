@@ -1,5 +1,5 @@
 {
-  "name": "uptime-monitoring-worker",
+  "name": "uptime-pulse-worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,8 +9,8 @@
     "preview": "vite preview",
     "deploy": "npm run build && wrangler deploy",
     "cf-typegen": "wrangler types",
-    "db:migrate:local": "wrangler d1 migrations apply uptime-monitoring --local",
-    "db:migrate:remote": "wrangler d1 migrations apply uptime-monitoring --remote",
+    "db:migrate:local": "wrangler d1 migrations apply uptime-pulse --local",
+    "db:migrate:remote": "wrangler d1 migrations apply uptime-pulse --remote",
     "lint": "eslint .",
     "test": "vitest run",
     "check": "npm run cf-typegen && npm run lint && npm run test && npm run build"

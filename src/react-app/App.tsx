@@ -62,7 +62,7 @@ export function App() {
       <header className="topbar">
         <a className="brand" href="/" aria-label="Status home">
           <span className="brand-mark"><span /></span>
-          {status?.siteName ?? "Pulse"}
+          {status?.siteName ?? "Uptime Pulse"}
         </a>
         <button className="text-button" type="button" onClick={showAdmin}>Manage</button>
       </header>
@@ -193,7 +193,7 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
   if (!authorized) {
     return (
       <main className="shell admin-shell">
-        <header className="topbar"><button className="brand plain-button" onClick={onClose}><span className="brand-mark"><span /></span>Pulse</button></header>
+        <header className="topbar"><button className="brand plain-button" onClick={onClose}><span className="brand-mark"><span /></span>Uptime Pulse</button></header>
         <section className="login-card">
           <p className="eyebrow">Private area</p>
           <h1>Manage monitors</h1>
@@ -212,9 +212,9 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
   return (
     <main className="shell admin-shell">
       <header className="topbar">
-        <button className="brand plain-button" onClick={onClose}><span className="brand-mark"><span /></span>Pulse Admin</button>
+        <button className="brand plain-button" onClick={onClose}><span className="brand-mark"><span /></span>Uptime Pulse - Admin</button>
         <div className="header-actions">
-          <button className="secondary-button" disabled={busy} onClick={() => void act(() => request("/api/admin/smtp/test", { method: "POST" }), "Test email sent.")}>Test SMTP</button>
+          <button className="secondary-button" disabled={busy} onClick={() => void act(() => request("/api/admin/smtp/test", { method: "POST" }), "Test email sent.")}>Test Email</button>
           <button className="primary-button" onClick={() => setEditing("new")}>Add monitor</button>
         </div>
       </header>
