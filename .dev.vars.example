@@ -1,0 +1,4 @@
+# Copy this file to .dev.vars and replace every value.
+ADMIN_TOKEN="replace-with-a-long-random-token"
+SMTP_USERNAME="you@example.com"
+SMTP_PASSWORD="replace-with-an-app-password"

@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "uptime-monitoring",
+  "main": "./src/worker/index.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "uptime-monitoring",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    "SITE_NAME": "Pulse",
+    "SMTP_HOST": "smtp.example.com",
+    "SMTP_PORT": "465",
+    "SMTP_FROM": "alerts@example.com",
+    "SMTP_TO": "you@example.com"
+  },
+  "secrets": {
+    "required": ["ADMIN_TOKEN", "SMTP_USERNAME", "SMTP_PASSWORD"]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.01
+    }
+  }
+}
