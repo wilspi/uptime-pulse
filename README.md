@@ -118,3 +118,7 @@ npm run db:migrate:local    # apply local D1 migrations
 npm run db:migrate:remote   # apply production D1 migrations
 npm run deploy              # build and deploy
 ```
+
+## License
+
+Uptime Pulse is available under the [MIT License](LICENSE).
