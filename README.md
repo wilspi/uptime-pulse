@@ -1,6 +1,6 @@
 # Uptime Pulse
 
-A small, self-hosted HTTP uptime monitor built for the Cloudflare Workers. It includes a public status page, a token-protected admin dashboard, D1 history, one-minute Cron checks, and direct SMTP alerts over TLS.
+A small, self-hosted HTTP uptime monitor built for the Cloudflare Workers (works with Cloudflare's Free Plan). It includes a public status page, a token-protected admin dashboard, D1 history, one-minute Cron checks, and direct SMTP alerts over TLS.
 
 ## What it does
 
@@ -12,6 +12,12 @@ A small, self-hosted HTTP uptime monitor built for the Cloudflare Workers. It in
 - Retains metrics and audit logs for 90 days and sent-notification records for 30 days.
 
 The public API exposes only an endpoint's origin, never its path, query string, detailed check error, admin logs, or configuration.
+
+## Yet another uptime monitor?
+
+Uptime Pulse is a small, single-probe monitor built on Cloudflare Workers and D1. Each interval produces one check result from Cloudflare’s network; unlike UptimeRobot, Pingdom, or StatusCake, it does not provide configurable monitoring regions or simultaneous multi-location verification. It is intentionally simpler than status-page platforms such as Cachet or Statping-ng, requires no Node.js server to manage, and has no mandatory Uptime Pulse subscription.
+
+The self-hosted editions of Uptime Kuma, Statping-ng, and Healthchecks are excellent, but require you to operate a server, application process, or container. Uptime Pulse instead runs on Cloudflare’s serverless platform and can fit within the Free plan at low usage. Your SMTP relay, domain, or usage beyond Cloudflare’s included limits may still incur costs.
 
 ## Reliability model
 
@@ -82,7 +88,9 @@ The D1 binding intentionally omits `database_id`; current Wrangler versions auto
 npx wrangler secret bulk .dev.vars
 ```
 
-Use a generated admin token of at least 32 random bytes. Apply the schema and deploy:
+Use a generated admin token of at least 32 random bytes. 
+
+Apply the schema and deploy:
 
 ```sh
 npm run db:migrate:remote
