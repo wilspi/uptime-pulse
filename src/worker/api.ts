@@ -7,12 +7,24 @@ import type { MonitorRow } from "./db/types";
 import { requireAdmin } from "./http/auth";
 import { readJsonBody } from "./http/body";
 import { checkMonitor } from "./monitoring/checker";
-import { parseMonitorInput, ValidationError } from "./monitoring/validation";
+import { parseMonitorInput, parseSiteSettings, parseStatusPageInput, ValidationError } from "./monitoring/validation";
 import { isSmtpConfigured, sendSmtpMail, SmtpError } from "./notifications/smtp";
-import { getPublicStatus } from "./status";
+import { getPublicStatus, isOnHomepage } from "./status";
+import {
+  ConflictError,
+  findEnabledPage,
+  getSiteSettings,
+  getStatusPage,
+  listStatusPages,
+  pageMonitorName,
+  savePageStatements,
+  saveSiteSettingsStatement,
+} from "./status-pages";
 import { getHourDetails, getIncidentDetails, parseHour } from "./check-details";
 
 interface AdminMonitorRow extends MonitorRow {
+  show_on_homepage: number;
+  page_count: number;
   status: AdminMonitor["status"] | null;
   last_checked_at: number | null;
   last_latency_ms: number | null;
@@ -42,6 +54,9 @@ interface AuditRow {
 
 const app = new Hono<{ Bindings: Env }>();
 
+// Shared pages are reachable only by link: keep them out of search results and referrers.
+const SHARED_PAGE_HEADERS = { "X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer" };
+
 app.use("*", secureHeaders());
 app.use("*", async (c, next) => {
   const startedAt = performance.now();
@@ -68,12 +83,36 @@ app.get("/api/status", async (c) => {
 app.get("/api/status/monitors/:id/checks", async (c) => {
   const now = Math.floor(Date.now() / 1000);
   const hour = parseHour(c.req.query("hour"), now);
-  const details = await getHourDetails(c.env, { monitorId: c.req.param("id"), hour, now, admin: false });
+  const monitorId = c.req.param("id");
+  if (!(await isOnHomepage(c.env, monitorId))) return c.json({ error: "Monitor not found." }, 404);
+  const details = await getHourDetails(c.env, { monitorId, hour, now, admin: false });
   if (!details) return c.json({ error: "Monitor not found." }, 404);
-  // Past hours change only when a run that spans them later recovers.
-  return c.json(details, 200, {
-    "Cache-Control": hour + 3600 <= now ? "public, max-age=300" : "public, max-age=30",
+  return c.json(details, 200, { "Cache-Control": detailsCacheControl(hour, now) });
+});
+
+app.get("/api/pages/:slug", async (c) => {
+  const page = await findEnabledPage(c.env, c.req.param("slug"));
+  if (!page) return c.json({ error: "Status page not found." }, 404, SHARED_PAGE_HEADERS);
+  const now = Math.floor(Date.now() / 1000);
+  const status = await getPublicStatus(c.env, now, {
+    kind: "page", pageId: page.id, title: page.title, description: page.description,
   });
+  return c.json(status, 200, {
+    ...SHARED_PAGE_HEADERS,
+    "Cache-Control": "public, max-age=30, stale-while-revalidate=60",
+  });
+});
+
+app.get("/api/pages/:slug/monitors/:id/checks", async (c) => {
+  const now = Math.floor(Date.now() / 1000);
+  const hour = parseHour(c.req.query("hour"), now);
+  const page = await findEnabledPage(c.env, c.req.param("slug"));
+  const monitorId = c.req.param("id");
+  const displayName = page ? await pageMonitorName(c.env, page.id, monitorId) : null;
+  if (!page || displayName === null) return c.json({ error: "Monitor not found." }, 404, SHARED_PAGE_HEADERS);
+  const details = await getHourDetails(c.env, { monitorId, hour, now, admin: false, displayName });
+  if (!details) return c.json({ error: "Monitor not found." }, 404, SHARED_PAGE_HEADERS);
+  return c.json(details, 200, { ...SHARED_PAGE_HEADERS, "Cache-Control": detailsCacheControl(hour, now) });
 });
 
 app.use("/api/admin/*", requireAdmin);
@@ -93,6 +132,80 @@ app.get("/api/admin/incidents/:id", async (c) => {
   const now = Math.floor(Date.now() / 1000);
   const details = await getIncidentDetails(c.env, { incidentId: c.req.param("id"), now });
   return details ? c.json(details) : c.json({ error: "Incident not found." }, 404);
+});
+
+app.get("/api/admin/settings", async (c) => c.json({ settings: await getSiteSettings(c.env) }));
+
+app.put("/api/admin/settings", async (c) => {
+  const settings = parseSiteSettings(await readJsonBody(c.req.raw));
+  await c.env.DB.batch([
+    saveSiteSettingsStatement(c.env, settings),
+    auditStatement(c.env, {
+      action: "settings.updated",
+      entityType: "settings",
+      details: { homepageShowAll: settings.homepageShowAll },
+      actorIp: requestIp(c.req.raw),
+    }),
+  ]);
+  return c.json({ settings });
+});
+
+app.get("/api/admin/pages", async (c) => c.json({ pages: await listStatusPages(c.env) }));
+
+app.post("/api/admin/pages", async (c) => {
+  const input = parseStatusPageInput(await readJsonBody(c.req.raw));
+  const id = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  await c.env.DB.batch([
+    ...(await savePageStatements(c.env, id, input, now, true)),
+    auditStatement(c.env, {
+      action: "page.created",
+      entityType: "page",
+      entityId: id,
+      details: { title: input.title, slug: input.slug, monitors: input.monitors.length },
+      actorIp: requestIp(c.req.raw),
+      createdAt: now,
+    }),
+  ]);
+  return c.json({ page: await getStatusPage(c.env, id) }, 201);
+});
+
+app.put("/api/admin/pages/:id", async (c) => {
+  const id = c.req.param("id");
+  const existing = await getStatusPage(c.env, id);
+  if (!existing) return c.json({ error: "Status page not found." }, 404);
+  const input = parseStatusPageInput(await readJsonBody(c.req.raw));
+  const now = Math.floor(Date.now() / 1000);
+  await c.env.DB.batch([
+    ...(await savePageStatements(c.env, id, input, now, false)),
+    auditStatement(c.env, {
+      action: existing.slug === input.slug ? "page.updated" : "page.link_changed",
+      entityType: "page",
+      entityId: id,
+      details: { title: input.title, enabled: input.enabled, monitors: input.monitors.length },
+      actorIp: requestIp(c.req.raw),
+      createdAt: now,
+    }),
+  ]);
+  return c.json({ page: await getStatusPage(c.env, id) });
+});
+
+app.delete("/api/admin/pages/:id", async (c) => {
+  const id = c.req.param("id");
+  const existing = await getStatusPage(c.env, id);
+  if (!existing) return c.json({ error: "Status page not found." }, 404);
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM status_page_monitors WHERE page_id = ?1").bind(id),
+    c.env.DB.prepare("DELETE FROM status_pages WHERE id = ?1").bind(id),
+    auditStatement(c.env, {
+      action: "page.deleted",
+      entityType: "page",
+      entityId: id,
+      details: { title: existing.title },
+      actorIp: requestIp(c.req.raw),
+    }),
+  ]);
+  return c.body(null, 204);
 });
 
 app.get("/api/admin/config", (c) =>
@@ -155,7 +268,7 @@ app.put("/api/admin/monitors/:id", async (c) => {
       action: "monitor.updated",
       entityType: "monitor",
       entityId: id,
-      details: { name: input.name, url: input.url, paused: input.paused },
+      details: { name: input.name, url: input.url, paused: input.paused, showOnHomepage: input.showOnHomepage },
       actorIp: requestIp(c.req.raw),
       createdAt: now,
     }),
@@ -178,6 +291,7 @@ app.delete("/api/admin/monitors/:id", async (c) => {
     c.env.DB.prepare("DELETE FROM incidents WHERE monitor_id = ?1").bind(id),
     c.env.DB.prepare("DELETE FROM metrics_hourly WHERE monitor_id = ?1").bind(id),
     c.env.DB.prepare("DELETE FROM check_runs WHERE monitor_id = ?1").bind(id),
+    c.env.DB.prepare("DELETE FROM status_page_monitors WHERE monitor_id = ?1").bind(id),
     c.env.DB.prepare("DELETE FROM monitor_state WHERE monitor_id = ?1").bind(id),
     c.env.DB.prepare("DELETE FROM monitors WHERE id = ?1").bind(id),
     auditStatement(c.env, {
@@ -285,6 +399,9 @@ app.onError((error, c) => {
   if (error instanceof ValidationError) {
     return c.json({ error: error.message }, 400);
   }
+  if (error instanceof ConflictError) {
+    return c.json({ error: error.message }, 409);
+  }
   console.error(
     JSON.stringify({
       message: "api_unhandled_error",
@@ -301,8 +418,9 @@ function adminMonitorSelect(id?: string): string {
   return `SELECT m.id, m.name, m.url, m.method, m.expected_status_min,
                  m.expected_status_max, m.expected_keyword, m.timeout_ms,
                  m.interval_seconds, m.follow_redirects, m.paused,
-                 m.created_at, m.updated_at, s.status, s.last_checked_at,
-                 s.last_latency_ms, s.last_http_status, s.last_error
+                 m.created_at, m.updated_at, m.show_on_homepage, s.status, s.last_checked_at,
+                 s.last_latency_ms, s.last_http_status, s.last_error,
+                 (SELECT COUNT(*) FROM status_page_monitors pm WHERE pm.monitor_id = m.id) AS page_count
             FROM monitors m
             LEFT JOIN monitor_state s ON s.monitor_id = m.id
            ${id ? "WHERE m.id = ?1" : ""}
@@ -339,6 +457,8 @@ function mapAdminMonitor(row: AdminMonitorRow): AdminMonitor {
     intervalSeconds: row.interval_seconds,
     followRedirects: row.follow_redirects === 1,
     paused: row.paused === 1,
+    showOnHomepage: row.show_on_homepage === 1,
+    pageCount: row.page_count,
     status: row.paused === 1 ? "paused" : (row.status ?? "unknown"),
     lastCheckedAt: row.last_checked_at,
     lastLatencyMs: row.last_latency_ms,
@@ -359,8 +479,8 @@ function insertMonitorStatement(
     `INSERT INTO monitors (
        id, name, url, method, expected_status_min, expected_status_max,
        expected_keyword, timeout_ms, interval_seconds, follow_redirects,
-       paused, created_at, updated_at
-     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)`,
+       paused, created_at, updated_at, show_on_homepage
+     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?13)`,
   ).bind(
     id,
     input.name,
@@ -374,6 +494,7 @@ function insertMonitorStatement(
     input.followRedirects ? 1 : 0,
     input.paused ? 1 : 0,
     now,
+    input.showOnHomepage ? 1 : 0,
   );
 }
 
@@ -388,7 +509,7 @@ function updateMonitorStatement(
        name = ?1, url = ?2, method = ?3, expected_status_min = ?4,
        expected_status_max = ?5, expected_keyword = ?6, timeout_ms = ?7,
        interval_seconds = ?8, follow_redirects = ?9, paused = ?10,
-       updated_at = ?11
+       updated_at = ?11, show_on_homepage = ?13
      WHERE id = ?12`,
   ).bind(
     input.name,
@@ -403,7 +524,13 @@ function updateMonitorStatement(
     input.paused ? 1 : 0,
     now,
     id,
+    input.showOnHomepage ? 1 : 0,
   );
+}
+
+function detailsCacheControl(hour: number, now: number): string {
+  // Past hours change only when a run that spans them later recovers.
+  return hour + 3600 <= now ? "public, max-age=300" : "public, max-age=30";
 }
 
 function requestIp(request: Request): string | null {

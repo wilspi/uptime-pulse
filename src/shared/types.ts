@@ -19,6 +19,8 @@ export interface MonitorInput {
   intervalSeconds: 60 | 300 | 900;
   followRedirects: boolean;
   paused: boolean;
+  /** Listed on the homepage when the homepage shows monitors. */
+  showOnHomepage: boolean;
 }
 
 export interface StatusMetricPoint {
@@ -45,6 +47,10 @@ export interface PublicMonitor {
 
 export interface PublicStatusResponse {
   siteName: string;
+  /** Status page description; null on the homepage. */
+  description: string | null;
+  /** False when the homepage is set to hide monitors. */
+  listed: boolean;
   generatedAt: number;
   overallStatus: MonitorStatus;
   monitors: PublicMonitor[];
@@ -59,6 +65,32 @@ export interface AdminMonitor extends MonitorInput {
   lastError: string | null;
   createdAt: number;
   updatedAt: number;
+  /** Number of status pages that show this monitor. */
+  pageCount: number;
+}
+
+export interface StatusPageMonitorInput {
+  monitorId: string;
+  /** Shown on the page instead of the monitor's own name. */
+  displayName: string | null;
+}
+
+export interface StatusPageInput {
+  slug: string;
+  title: string;
+  description: string | null;
+  enabled: boolean;
+  monitors: StatusPageMonitorInput[];
+}
+
+export interface StatusPage extends StatusPageInput {
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SiteSettings {
+  homepageShowAll: boolean;
 }
 
 export interface IncidentSummary {

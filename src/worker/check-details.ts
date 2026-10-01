@@ -82,15 +82,15 @@ export function parseHour(value: string | undefined, now: number): number {
 
 export async function getHourDetails(
   env: Env,
-  options: { monitorId: string; hour: number; now: number; admin: boolean },
+  options: { monitorId: string; hour: number; now: number; admin: boolean; displayName?: string },
 ): Promise<CheckDetailsResponse | null> {
-  const { monitorId, hour, now, admin } = options;
+  const { monitorId, hour, now, admin, displayName } = options;
   const monitor = await env.DB.prepare("SELECT name FROM monitors WHERE id = ?1")
     .bind(monitorId)
     .first<{ name: string }>();
   if (!monitor) return null;
 
-  const window = { monitorId, monitorName: monitor.name, from: hour, to: hour + 3600, now, admin };
+  const window = { monitorId, monitorName: displayName ?? monitor.name, from: hour, to: hour + 3600, now, admin };
   const [metricResult, ...rest] = await env.DB.batch([
     env.DB.prepare(
       `SELECT total_checks, successful_checks, total_latency_ms, min_latency_ms, max_latency_ms
@@ -230,7 +230,8 @@ function mapWindow(
     incidents: incidentRows.map((row): IncidentDetail => ({
       id: row.id,
       monitorId: row.monitor_id,
-      monitorName: row.monitor_name,
+      // A status page may show the monitor under a different name.
+      monitorName: window.monitorName,
       startedAt: row.started_at,
       resolvedAt: row.resolved_at,
       confirmedAt: row.created_at,

@@ -1,7 +1,10 @@
-import type { MonitorInput, MonitorMethod } from "../../shared/types";
+import type { MonitorInput, MonitorMethod, SiteSettings, StatusPageInput } from "../../shared/types";
 
 const ALLOWED_INTERVALS = new Set([60, 300, 900]);
 const ALLOWED_PORTS = new Set(["", "80", "443", "8080", "8443"]);
+const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{1,62}[a-z0-9])$/;
+const RESERVED_SLUGS = new Set(["admin", "api", "assets", "s", "static", "status"]);
+const MAX_PAGE_MONITORS = 20;
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -65,7 +68,57 @@ export function parseMonitorInput(value: unknown): MonitorInput {
     intervalSeconds: intervalSeconds as 60 | 300 | 900,
     followRedirects: booleanValue(value.followRedirects, false),
     paused: booleanValue(value.paused, false),
+    showOnHomepage: booleanValue(value.showOnHomepage, false),
   };
+}
+
+export function parseStatusPageInput(value: unknown): StatusPageInput {
+  if (!isRecord(value)) {
+    throw new ValidationError("The request body must be a JSON object.");
+  }
+
+  const slug = requiredString(value.slug, "slug", 64).toLowerCase();
+  if (!SLUG_PATTERN.test(slug) || slug.includes("--")) {
+    throw new ValidationError("The link must be 3–64 lowercase letters, numbers, or single hyphens.");
+  }
+  if (RESERVED_SLUGS.has(slug)) {
+    throw new ValidationError("That link is reserved. Choose another.");
+  }
+
+  if (!Array.isArray(value.monitors)) {
+    throw new ValidationError("monitors must be a list.");
+  }
+  if (value.monitors.length > MAX_PAGE_MONITORS) {
+    throw new ValidationError(`A status page can show at most ${MAX_PAGE_MONITORS} monitors.`);
+  }
+  const monitors = value.monitors.map((entry) => {
+    if (!isRecord(entry)) throw new ValidationError("Each page monitor must be an object.");
+    return {
+      monitorId: requiredString(entry.monitorId, "monitorId", 64),
+      displayName: optionalString(entry.displayName, "displayName", 80),
+    };
+  });
+  if (new Set(monitors.map((monitor) => monitor.monitorId)).size !== monitors.length) {
+    throw new ValidationError("Each monitor can appear on a page only once.");
+  }
+
+  return {
+    slug,
+    title: requiredString(value.title, "title", 80),
+    description: optionalString(value.description, "description", 280),
+    enabled: booleanValue(value.enabled, true),
+    monitors,
+  };
+}
+
+export function parseSiteSettings(value: unknown): SiteSettings {
+  if (!isRecord(value)) {
+    throw new ValidationError("The request body must be a JSON object.");
+  }
+  if (typeof value.homepageShowAll !== "boolean") {
+    throw new ValidationError("homepageShowAll must be true or false.");
+  }
+  return { homepageShowAll: value.homepageShowAll };
 }
 
 export function validateMonitorUrl(rawUrl: string): string {

@@ -7,9 +7,15 @@ import type {
   MonitorStatus,
   PublicMonitor,
   PublicStatusResponse,
+  SiteSettings,
+  StatusPage,
 } from "../shared/types";
 
 import { CheckDetailsDialog, formatTime, type DetailSelection } from "./CheckDetailsDialog";
+import { SharingSection, StatusPageDialog } from "./StatusPages";
+
+// Shared status pages live at /s/<link>; everything else is the homepage.
+const pageSlug = location.pathname.match(/^\/s\/([a-z0-9-]+)\/?$/i)?.[1]?.toLowerCase() ?? null;
 
 const emptyMonitor: MonitorInput = {
   name: "",
@@ -22,6 +28,7 @@ const emptyMonitor: MonitorInput = {
   intervalSeconds: 60,
   followRedirects: true,
   paused: false,
+  showOnHomepage: false,
 };
 
 export function App() {
@@ -31,7 +38,8 @@ export function App() {
 
   const loadStatus = useCallback(async () => {
     try {
-      const response = await fetch("/api/status");
+      const response = await fetch(pageSlug ? `/api/pages/${encodeURIComponent(pageSlug)}` : "/api/status");
+      if (response.status === 404 && pageSlug) throw new Error("This status page does not exist or is no longer shared.");
       if (!response.ok) throw new Error("Status data is temporarily unavailable.");
       setStatus(await response.json() as PublicStatusResponse);
       setError(null);
@@ -39,6 +47,18 @@ export function App() {
       setError(caught instanceof Error ? caught.message : "Could not load status.");
     }
   }, []);
+
+  useEffect(() => {
+    if (!pageSlug) return;
+    // Backs up the X-Robots-Tag header in case a crawler only reads the document.
+    const robots = Object.assign(document.createElement("meta"), { name: "robots", content: "noindex, nofollow" });
+    document.head.append(robots);
+    return () => robots.remove();
+  }, []);
+
+  useEffect(() => {
+    if (status) document.title = status.siteName;
+  }, [status]);
 
   useEffect(() => {
     void loadStatus();
@@ -59,42 +79,55 @@ export function App() {
 
   if (adminOpen) return <AdminPanel onClose={showStatus} />;
 
+  const hidden = status !== null && !status.listed;
+
   return (
     <main className="shell">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="Status home">
-          <span className="brand-mark"><span /></span>
-          {status?.siteName ?? "Uptime Pulse"}
-        </a>
-        <button className="text-button" type="button" onClick={showAdmin}>Manage</button>
+        {/* A shared page does not link to the homepage or the admin area. */}
+        {pageSlug
+          ? <span className="brand"><span className="brand-mark"><span /></span>{status?.siteName ?? "Status"}</span>
+          : <a className="brand" href="/" aria-label="Status home"><span className="brand-mark"><span /></span>{status?.siteName ?? "Uptime Pulse"}</a>}
+        {!pageSlug && <button className="text-button" type="button" onClick={showAdmin}>Manage</button>}
       </header>
 
-      <section className="hero">
-        <div className={`hero-icon ${statusTone(status?.overallStatus ?? "unknown")}`}>
-          {status?.overallStatus === "down" ? "!" : "✓"}
-        </div>
-        <p className="eyebrow">System status</p>
-        <h1>{overallMessage(status?.overallStatus)}</h1>
-        <p className="hero-copy">
-          {status ? `${status.monitors.length} service${status.monitors.length === 1 ? "" : "s"} monitored from Cloudflare's network.` : "Retrieving the latest checks…"}
-        </p>
-      </section>
+      {hidden ? (
+        <section className="hero">
+          <p className="eyebrow">Status</p>
+          <h1>Status pages are shared privately</h1>
+          <p className="hero-copy">Use the status page link you were given to see the services that matter to you.</p>
+        </section>
+      ) : (
+        <section className="hero">
+          <div className={`hero-icon ${statusTone(status?.overallStatus ?? "unknown")}`}>
+            {status?.overallStatus === "down" ? "!" : "✓"}
+          </div>
+          <p className="eyebrow">System status</p>
+          <h1>{overallMessage(status?.overallStatus)}</h1>
+          {status?.description && <p className="hero-copy hero-description">{status.description}</p>}
+          <p className="hero-copy">
+            {status ? `${status.monitors.length} service${status.monitors.length === 1 ? "" : "s"} monitored from Cloudflare's network.` : error ? "" : "Retrieving the latest checks…"}
+          </p>
+        </section>
+      )}
 
       {error && <div className="notice error">{error}</div>}
 
-      <section className="monitor-list" aria-label="Monitored services">
-        {status?.monitors.map((monitor) => <MonitorCard key={monitor.id} monitor={monitor} generatedAt={status.generatedAt} />)}
-        {status && status.monitors.length === 0 && (
-          <div className="empty-state">
-            <h2>No services yet</h2>
-            <p>Open Manage to add the first endpoint.</p>
-          </div>
-        )}
-        {!status && !error && <div className="monitor-card skeleton" />}
-      </section>
+      {!hidden && (
+        <section className="monitor-list" aria-label="Monitored services">
+          {status?.monitors.map((monitor) => <MonitorCard key={monitor.id} monitor={monitor} generatedAt={status.generatedAt} />)}
+          {status && status.monitors.length === 0 && (
+            <div className="empty-state">
+              <h2>No services yet</h2>
+              <p>{pageSlug ? "Services will appear here once they are added to this page." : "Open Manage to add the first endpoint, or choose which monitors to show on the homepage."}</p>
+            </div>
+          )}
+          {!status && !error && <div className="monitor-card skeleton" />}
+        </section>
+      )}
 
       <SiteFooter>
-        Updated {status ? relativeTime(status.generatedAt) : "just now"} · status page refreshes every minute
+        {!hidden && <>Updated {status ? relativeTime(status.generatedAt) : "just now"} · status page refreshes every minute</>}
       </SiteFooter>
     </main>
   );
@@ -123,7 +156,7 @@ function MonitorCard({ monitor, generatedAt }: { monitor: PublicMonitor; generat
           const ratio = metric && metric.checks > 0 ? metric.successes / metric.checks : null;
           const tone = ratio === null ? "empty" : ratio === 1 ? "good" : ratio >= 0.8 ? "warn" : "bad";
           const label = `${formatTime(hour)}: ${ratio === null ? "No checks recorded" : `${metric!.checks - metric!.successes} of ${metric!.checks} checks failed`}. View details`;
-          return <button type="button" className={tone} key={hour} title={label} aria-label={label} onClick={() => setSelection({ monitorId: monitor.id, hour })} />;
+          return <button type="button" className={tone} key={hour} title={label} aria-label={label} onClick={() => setSelection({ monitorId: monitor.id, hour, pageSlug: pageSlug ?? undefined })} />;
         })}
       </div>
       <div className="strip-caption"><span>23 hours ago</span><span>Each block is 1 hour · Click for details</span><span>Current hour</span></div>
@@ -145,8 +178,11 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
   const [monitors, setMonitors] = useState<AdminMonitor[]>([]);
   const [incidents, setIncidents] = useState<IncidentSummary[]>([]);
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [pages, setPages] = useState<StatusPage[]>([]);
+  const [settings, setSettings] = useState<SiteSettings>({ homepageShowAll: true });
   const [selection, setSelection] = useState<DetailSelection | null>(null);
   const [editing, setEditing] = useState<AdminMonitor | "new" | null>(null);
+  const [editingPage, setEditingPage] = useState<StatusPage | "new" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -166,15 +202,19 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
 
   const loadAdmin = useCallback(async () => {
     try {
-      const [monitorData, incidentData, logData] = await Promise.all([
+      const [monitorData, incidentData, logData, pageData, settingsData] = await Promise.all([
         request<{ monitors: AdminMonitor[] }>("/api/admin/monitors"),
         request<{ incidents: IncidentSummary[] }>("/api/admin/incidents"),
         request<{ logs: AuditLogEntry[] }>("/api/admin/logs"),
+        request<{ pages: StatusPage[] }>("/api/admin/pages"),
+        request<{ settings: SiteSettings }>("/api/admin/settings"),
       ]);
       sessionStorage.setItem("pulse-admin-token", token);
       setMonitors(monitorData.monitors);
       setIncidents(incidentData.incidents);
       setLogs(logData.logs);
+      setPages(pageData.pages);
+      setSettings(settingsData.settings);
       setAuthorized(true);
       setMessage(null);
     } catch (caught) {
@@ -238,7 +278,7 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
       <section className="admin-list">
         {monitors.map((monitor) => (
           <article className="admin-row" key={monitor.id}>
-            <div className="row-status"><ServiceIcon name={monitor.name} url={monitor.url} compact /><span className={`status-dot ${statusTone(monitor.status)}`} /><div><strong>{monitor.name}</strong><span>{monitor.url}</span></div></div>
+            <div className="row-status"><ServiceIcon name={monitor.name} url={monitor.url} compact /><span className={`status-dot ${statusTone(monitor.status)}`} /><div><strong>{monitor.name}{settings.homepageShowAll && monitor.showOnHomepage && <small className="row-tag">Homepage</small>}{monitor.pageCount > 0 && <small className="row-tag">{monitor.pageCount} page{monitor.pageCount === 1 ? "" : "s"}</small>}</strong><span>{monitor.url}</span></div></div>
             <StatusBadge status={monitor.status} />
             <span className="hide-mobile">Every {monitor.intervalSeconds === 60 ? "minute" : `${monitor.intervalSeconds / 60} min`}</span>
             <div className="row-actions">
@@ -254,6 +294,22 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
         {monitors.length === 0 && <div className="empty-state"><h2>Add your first service</h2><p>The scheduler will pick it up on the next minute.</p></div>}
       </section>
 
+      <SharingSection
+        settings={settings}
+        pages={pages}
+        monitors={monitors}
+        busy={busy}
+        onToggleHomepage={(homepageShowAll) => void act(
+          () => request("/api/admin/settings", { method: "PUT", body: JSON.stringify({ homepageShowAll }) }),
+          homepageShowAll ? "Homepage now shows selected monitors." : "Homepage now hides all monitors.",
+        )}
+        onAdd={() => setEditingPage("new")}
+        onEdit={setEditingPage}
+        onDelete={(page) => {
+          if (confirm(`Delete "${page.title}"? Its link will stop working.`)) void act(() => request(`/api/admin/pages/${page.id}`, { method: "DELETE" }), `${page.title} deleted.`);
+        }}
+      />
+
       <section className="admin-columns">
         <div><h2>Recent incidents</h2><div className="activity-card">{incidents.slice(0, 8).map((incident) => <button type="button" className="activity-row incident-button" key={incident.id} onClick={() => setSelection({ incidentId: incident.id })}><span className={`status-dot ${incident.resolvedAt ? "up" : "down"}`} /><div><strong>{incident.monitorName}</strong><span>{incident.resolvedAt ? `Recovered ${relativeTime(incident.resolvedAt)}` : `Started ${relativeTime(incident.startedAt)}`}</span><span>View details →</span></div></button>)}{incidents.length === 0 && <p className="muted">No incidents recorded.</p>}</div></div>
         <div><h2>Admin activity</h2><div className="activity-card">{logs.slice(0, 8).map((log) => <div className="activity-row" key={log.id}><span className="activity-mark" /><div><strong>{humanAction(log.action)}</strong><span>{relativeTime(log.createdAt)}</span></div></div>)}{logs.length === 0 && <p className="muted">No activity recorded.</p>}</div></div>
@@ -262,6 +318,13 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
       <SiteFooter />
 
       {selection && <CheckDetailsDialog selection={selection} token={token} onClose={() => setSelection(null)} />}
+      {editingPage && <StatusPageDialog page={editingPage === "new" ? null : editingPage} monitors={monitors} busy={busy} onClose={() => setEditingPage(null)} onSave={(input) => void (async () => {
+        const saved = await act(
+          () => request(editingPage === "new" ? "/api/admin/pages" : `/api/admin/pages/${editingPage.id}`, { method: editingPage === "new" ? "POST" : "PUT", body: JSON.stringify(input) }),
+          editingPage === "new" ? "Status page created." : "Status page updated.",
+        );
+        if (saved) setEditingPage(null);
+      })()} />}
       {editing && <MonitorDialog monitor={editing === "new" ? null : editing} busy={busy} onClose={() => setEditing(null)} onSave={(input) => void (async () => {
         const saved = await act(
           () => request(editing === "new" ? "/api/admin/monitors" : `/api/admin/monitors/${editing.id}`, { method: editing === "new" ? "POST" : "PUT", body: JSON.stringify(input) }),
@@ -324,7 +387,7 @@ function MonitorDialog({ monitor, busy, onClose, onSave }: { monitor: AdminMonit
             <label>Timeout (ms)<input type="number" min="1000" max="30000" step="1000" value={form.timeoutMs} onChange={(e) => field("timeoutMs", Number(e.target.value))} /></label>
             <label className="wide">Expected text <span>(optional, GET only)</span><input maxLength={200} value={form.expectedKeyword ?? ""} onChange={(e) => field("expectedKeyword", e.target.value || null)} placeholder="healthy" /></label>
           </div>
-          <div className="check-row"><label title="Each redirect hop makes another HTTP request. Save the final URL to avoid the extra request."><input type="checkbox" checked={form.followRedirects} onChange={(e) => field("followRedirects", e.target.checked)} /> Follow redirects (one request per hop)</label><label><input type="checkbox" checked={form.paused} onChange={(e) => field("paused", e.target.checked)} /> Paused</label></div>
+          <div className="check-row"><label title="Each redirect hop makes another HTTP request. Save the final URL to avoid the extra request."><input type="checkbox" checked={form.followRedirects} onChange={(e) => field("followRedirects", e.target.checked)} /> Follow redirects (one request per hop)</label><label><input type="checkbox" checked={form.paused} onChange={(e) => field("paused", e.target.checked)} /> Paused</label><label title="Status pages are managed separately under Sharing."><input type="checkbox" checked={form.showOnHomepage} onChange={(e) => field("showOnHomepage", e.target.checked)} /> Show on homepage</label></div>
           <div className="modal-actions"><button className="secondary-button" type="button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy} type="submit">{busy ? "Saving…" : "Save monitor"}</button></div>
         </form>
       </section>

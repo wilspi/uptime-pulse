@@ -115,6 +115,23 @@ The default ceiling of 20 monitors is an application safety guard. At one-minute
 
 The status response is browser-cacheable for 30 seconds. Admin requests are never exposed by the public API. Cloudflare structured logs record request metadata and scheduler events; D1 stores the last 100 admin audit entries shown in the dashboard.
 
+## Downtime diagnostics
+
+Click any hourly block to see why it is green (all checks passed), yellow (at least 80% but fewer than 100% passed), red (fewer than 80% passed), or gray (no checks). Blocks are fixed hourly windows, including the current partial hour. Details include check counts, response times (average, fastest, slowest), confirmed downtime in the hour, and a timeline of what failed: each run of consecutive failures with the same cause, how many checks it covered, and when checks passed again. Yellow blocks without a confirmed incident are called out as brief or intermittent failures. Times use the browser's local timezone. Counts describe monitoring checks, not customer traffic.
+
+Sign in through Manage and reopen a block for raw errors, expected status and timeout, selected diagnostic headers, and a response excerpt from the first failure of each run. Admins also see when down and recovery alerts were emailed (or why they failed) and any monitor changes made in that hour. Admin monitor rows offer History, and recent incidents open their full timeline, including when the outage was confirmed. Public endpoints never include response bodies, raw errors, cookies, monitor settings, or private endpoint paths. Response excerpts may contain sensitive service data, so access requires the admin token. Binary bodies and successful response bodies are not saved.
+
+## Sharing and status pages
+
+Under Manage → Sharing you control who sees what:
+
+- **Show monitors on homepage** — when off, the homepage and `/api/status` list no monitors. When on, only monitors with **Show on homepage** ticked are listed. New monitors start hidden.
+- **Status pages** — each page has its own link (`/s/<link>`), title, optional description, and a chosen set of monitors with optional display names. Visitors see only that page's monitors and can open details only for them. Pages do not link to the homepage or the admin area.
+
+Links can be custom (`/s/acme`), but short names are easy to guess; **Generate** appends random characters (`/s/acme-x7k2p9qa`). Changing a page's link or turning the page off stops the old link working immediately, although browsers may show cached data for up to a minute. Shared pages send `X-Robots-Tag: noindex` and `Referrer-Policy: no-referrer`.
+
+A link hides a page; it does not authenticate visitors. Anyone who has the link can see that page and only that page.
+
 ## Useful commands
 
 ```sh
@@ -130,11 +147,3 @@ npm run deploy              # build and deploy
 ## License
 
 Uptime Pulse is available under the [MIT License](LICENSE).
-
-## Downtime diagnostics
-
-Click any hourly block to see why it is green (all checks passed), yellow (at least 80% but fewer than 100% passed), red (fewer than 80% passed), or gray (no checks). Blocks are fixed hourly windows, including the current partial hour. Details include check counts, response times (average, fastest, slowest), confirmed downtime in the hour, and a timeline of what failed: each run of consecutive failures with the same cause, how many checks it covered, and when checks passed again. Yellow blocks without a confirmed incident are called out as brief or intermittent failures. Times use the browser's local timezone. Counts describe monitoring checks, not customer traffic.
-
-Sign in through Manage and reopen a block for raw errors, expected status and timeout, selected diagnostic headers, and a response excerpt from the first failure of each run. Admins also see when down and recovery alerts were emailed (or why they failed) and any monitor changes made in that hour. Admin monitor rows offer History, and recent incidents open their full timeline, including when the outage was confirmed. Public endpoints never include response bodies, raw errors, cookies, monitor settings, or private endpoint paths. Response excerpts may contain sensitive service data, so access requires the admin token. Binary bodies and successful response bodies are not saved.
-
-Apply migration `0002_check_history.sql` before deploying this version (`npm run db:migrate:remote`). Hours before the migration still show their counts, but not failure details.

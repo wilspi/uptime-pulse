@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CheckDetailsResponse, FailureRun, IncidentDetail } from "../shared/types";
 
-export type DetailSelection = { monitorId: string; hour: number } | { incidentId: string };
+export type DetailSelection = { monitorId: string; hour: number; pageSlug?: string } | { incidentId: string };
 
 const RETENTION_HOURS = 90 * 24;
 
@@ -30,7 +30,11 @@ export function CheckDetailsDialog({ selection, token, onClose }: {
       setError(null);
       const path = "incidentId" in selection
         ? `/api/admin/incidents/${encodeURIComponent(selection.incidentId)}`
-        : `/api/${privateDetails ? "admin" : "status"}/monitors/${encodeURIComponent(selection.monitorId)}/checks?hour=${hour}`;
+        : privateDetails
+          ? `/api/admin/monitors/${encodeURIComponent(selection.monitorId)}/checks?hour=${hour}`
+          : selection.pageSlug
+            ? `/api/pages/${encodeURIComponent(selection.pageSlug)}/monitors/${encodeURIComponent(selection.monitorId)}/checks?hour=${hour}`
+            : `/api/status/monitors/${encodeURIComponent(selection.monitorId)}/checks?hour=${hour}`;
       try {
         const response = await fetch(path, {
           signal: controller.signal,
@@ -73,7 +77,7 @@ export function CheckDetailsDialog({ selection, token, onClose }: {
           {data.runs.length === 0 && <p className="muted">{data.failedChecks > 0 ? "Failure details were not recorded for this period. They are kept for 90 days, starting from when diagnostics were enabled." : "No failed checks in this period."}</p>}
           {data.runs.length > 0 && <ol className="run-list">{[...data.runs].reverse().map((run) => <RunItem key={run.id} run={run} from={data.from} privateDetails={privateDetails} />)}</ol>}
           {data.runsTruncated && <p className="muted">Showing the 100 most recent failure runs.</p>}
-          {!privateDetails && data.runs.length > 0 && <p className="muted">Sign in through Manage, then reopen a block to see raw errors and response excerpts.</p>}
+          {!privateDetails && !("pageSlug" in selection && selection.pageSlug) && data.runs.length > 0 && <p className="muted">Sign in through Manage, then reopen a block to see raw errors and response excerpts.</p>}
         </section>
 
         <section className="detail-section"><h3>{hour === null ? "Incident" : "Confirmed incidents"}</h3>

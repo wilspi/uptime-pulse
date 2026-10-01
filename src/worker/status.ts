@@ -38,33 +38,65 @@ interface IncidentWindowRow {
 const THIRTY_DAYS = 30 * 24 * 60 * 60;
 const TWENTY_FOUR_HOURS = 24 * 60 * 60;
 
-export async function getPublicStatus(env: Env, now: number): Promise<PublicStatusResponse> {
-  const [monitorResult, metricResult, incidentResult] = await Promise.all([
+/** The homepage, or a shared status page with its own monitors and display names. */
+export type StatusScope =
+  | { kind: "homepage" }
+  | { kind: "page"; pageId: string; title: string; description: string | null };
+
+const HOMEPAGE_LISTED = `EXISTS (SELECT 1 FROM settings WHERE key = 'homepage_show_all' AND value = '1')`;
+const HOMEPAGE_MONITOR_IDS = `SELECT id FROM monitors WHERE show_on_homepage = 1 AND ${HOMEPAGE_LISTED}`;
+
+export async function getPublicStatus(
+  env: Env,
+  now: number,
+  scope: StatusScope = { kind: "homepage" },
+): Promise<PublicStatusResponse> {
+  const page = scope.kind === "page" ? scope : null;
+  // Each query carries the scope so other monitors' data is never read or returned.
+  const scopeIds = (parameter: number) =>
+    page ? `SELECT monitor_id FROM status_page_monitors WHERE page_id = ?${parameter}` : HOMEPAGE_MONITOR_IDS;
+  const scopeBindings = page ? [page.pageId] : [];
+
+  const [monitorResult, metricResult, incidentResult, listed] = await Promise.all([
     env.DB.prepare(
-      `SELECT m.id, m.name, m.url, m.interval_seconds, m.paused, m.created_at,
-              s.status, s.last_checked_at, s.last_latency_ms,
-              s.last_http_status, s.last_error
-         FROM monitors m
-         LEFT JOIN monitor_state s ON s.monitor_id = m.id
-        ORDER BY m.created_at ASC`,
-    ).all<PublicMonitorRow>(),
+      page
+        ? `SELECT m.id, COALESCE(pm.display_name, m.name) AS name, m.url, m.interval_seconds,
+                  m.paused, m.created_at, s.status, s.last_checked_at, s.last_latency_ms,
+                  s.last_http_status, s.last_error
+             FROM status_page_monitors pm
+             JOIN monitors m ON m.id = pm.monitor_id
+             LEFT JOIN monitor_state s ON s.monitor_id = m.id
+            WHERE pm.page_id = ?1
+            ORDER BY pm.position ASC`
+        : `SELECT m.id, m.name, m.url, m.interval_seconds, m.paused, m.created_at,
+                  s.status, s.last_checked_at, s.last_latency_ms,
+                  s.last_http_status, s.last_error
+             FROM monitors m
+             LEFT JOIN monitor_state s ON s.monitor_id = m.id
+            WHERE m.id IN (${HOMEPAGE_MONITOR_IDS})
+            ORDER BY m.created_at ASC`,
+    )
+      .bind(...scopeBindings)
+      .all<PublicMonitorRow>(),
     env.DB.prepare(
       `SELECT monitor_id, bucket_start, total_checks, successful_checks,
               total_latency_ms, min_latency_ms, max_latency_ms
          FROM metrics_hourly
-        WHERE bucket_start >= ?1
+        WHERE bucket_start >= ?1 AND monitor_id IN (${scopeIds(2)})
         ORDER BY bucket_start ASC`,
     )
-      .bind(Math.floor(now / 3600) * 3600 - TWENTY_FOUR_HOURS + 3600)
+      .bind(Math.floor(now / 3600) * 3600 - TWENTY_FOUR_HOURS + 3600, ...scopeBindings)
       .all<MetricRow>(),
     env.DB.prepare(
       `SELECT monitor_id, started_at, resolved_at
          FROM incidents
         WHERE started_at < ?1
-          AND (resolved_at IS NULL OR resolved_at > ?2)`,
+          AND (resolved_at IS NULL OR resolved_at > ?2)
+          AND monitor_id IN (${scopeIds(3)})`,
     )
-      .bind(now, now - THIRTY_DAYS)
+      .bind(now, now - THIRTY_DAYS, ...scopeBindings)
       .all<IncidentWindowRow>(),
+    page ? Promise.resolve(true) : isHomepageListed(env),
   ]);
 
   const metricsByMonitor = groupMetrics(metricResult.results);
@@ -74,11 +106,26 @@ export async function getPublicStatus(env: Env, now: number): Promise<PublicStat
   );
 
   return {
-    siteName: env.SITE_NAME,
+    siteName: page?.title ?? env.SITE_NAME,
+    description: page?.description ?? null,
+    listed,
     generatedAt: now,
     overallStatus: overallStatus(monitors),
     monitors,
   };
+}
+
+export async function isHomepageListed(env: Env): Promise<boolean> {
+  const row = await env.DB.prepare(`SELECT ${HOMEPAGE_LISTED} AS listed`).first<{ listed: number }>();
+  return row?.listed === 1;
+}
+
+/** Whether a monitor may be shown on the homepage right now. */
+export async function isOnHomepage(env: Env, monitorId: string): Promise<boolean> {
+  const row = await env.DB.prepare(`SELECT 1 AS found FROM (${HOMEPAGE_MONITOR_IDS}) WHERE id = ?1`)
+    .bind(monitorId)
+    .first<{ found: number }>();
+  return row !== null;
 }
 
 function mapPublicMonitor(
