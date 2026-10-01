@@ -1,3 +1,4 @@
+import type { FailureKind } from "../../shared/types";
 import type { MonitorRow } from "../db/types";
 
 const MAX_ASSERTION_BYTES = 64 * 1024;
@@ -8,12 +9,17 @@ export interface CheckResult {
   latencyMs: number;
   httpStatus: number | null;
   error: string | null;
+  failureKind: FailureKind | null;
+  responseBody: string | null;
+  responseHeaders: Record<string, string>;
 }
 
 export async function checkMonitor(monitor: MonitorRow): Promise<CheckResult> {
   const checkedAt = Math.floor(Date.now() / 1000);
   const startedAt = performance.now();
 
+  let httpStatus: number | null = null;
+  let responseHeaders: Record<string, string> = {};
   try {
     const response = await fetch(monitor.url, {
       method: monitor.method,
@@ -24,18 +30,23 @@ export async function checkMonitor(monitor: MonitorRow): Promise<CheckResult> {
         "User-Agent": "Pulse-Uptime-Monitor/0.1",
       },
     });
+    httpStatus = response.status;
+    responseHeaders = diagnosticHeaders(response.headers);
     const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
 
     if (
       response.status < monitor.expected_status_min ||
       response.status > monitor.expected_status_max
     ) {
-      await safelyCancelBody(response);
+      const responseBody = await failureExcerpt(response);
       return {
         successful: false,
         checkedAt,
         latencyMs,
         httpStatus: response.status,
+        failureKind: "http",
+        responseBody,
+        responseHeaders,
         error: `Expected HTTP ${monitor.expected_status_min}-${monitor.expected_status_max}, received ${response.status}.`,
       };
     }
@@ -48,6 +59,9 @@ export async function checkMonitor(monitor: MonitorRow): Promise<CheckResult> {
           checkedAt,
           latencyMs,
           httpStatus: response.status,
+          failureKind: "keyword",
+          responseBody: new TextDecoder().decode(new TextEncoder().encode(body).subarray(0, 2048)),
+          responseHeaders,
           error: `Expected response text was not found in the first ${MAX_ASSERTION_BYTES / 1024} KiB.`,
         };
       }
@@ -61,6 +75,9 @@ export async function checkMonitor(monitor: MonitorRow): Promise<CheckResult> {
       latencyMs,
       httpStatus: response.status,
       error: null,
+      failureKind: null,
+      responseBody: null,
+      responseHeaders: {},
     };
   } catch (error) {
     const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
@@ -68,7 +85,10 @@ export async function checkMonitor(monitor: MonitorRow): Promise<CheckResult> {
       successful: false,
       checkedAt,
       latencyMs,
-      httpStatus: null,
+      httpStatus,
+      failureKind: isTimeout(error) ? "timeout" : httpStatus === null ? "network" : "body",
+      responseBody: null,
+      responseHeaders,
       error: describeFetchError(error, monitor.timeout_ms),
     };
   }
@@ -118,11 +138,38 @@ async function safelyCancelBody(response: Response): Promise<void> {
 }
 
 function describeFetchError(error: unknown, timeoutMs: number): string {
-  if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) {
+  if (isTimeout(error)) {
     return `Timed out after ${timeoutMs} ms.`;
   }
   if (error instanceof Error) {
     return `Request failed: ${error.message.slice(0, 220)}`;
   }
   return "Request failed for an unknown reason.";
+}
+
+function isTimeout(error: unknown): boolean {
+  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+}
+
+function diagnosticHeaders(headers: Headers): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const name of ["content-type", "retry-after", "cf-ray", "x-request-id", "x-correlation-id"]) {
+    const value = headers.get(name);
+    if (value) result[name] = value.slice(0, 256);
+  }
+  return result;
+}
+
+async function failureExcerpt(response: Response): Promise<string | null> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!/text\/|json|xml/i.test(contentType)) {
+    await safelyCancelBody(response);
+    return null;
+  }
+  try {
+    return await readBoundedBody(response, 2048);
+  } catch {
+    // Preserve the HTTP failure even when its response body cannot be read.
+    return null;
+  }
 }

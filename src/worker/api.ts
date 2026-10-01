@@ -10,6 +10,7 @@ import { checkMonitor } from "./monitoring/checker";
 import { parseMonitorInput, ValidationError } from "./monitoring/validation";
 import { isSmtpConfigured, sendSmtpMail, SmtpError } from "./notifications/smtp";
 import { getPublicStatus } from "./status";
+import { getHourDetails, getIncidentDetails, parseHour } from "./check-details";
 
 interface AdminMonitorRow extends MonitorRow {
   status: AdminMonitor["status"] | null;
@@ -64,7 +65,35 @@ app.get("/api/status", async (c) => {
   });
 });
 
+app.get("/api/status/monitors/:id/checks", async (c) => {
+  const now = Math.floor(Date.now() / 1000);
+  const hour = parseHour(c.req.query("hour"), now);
+  const details = await getHourDetails(c.env, { monitorId: c.req.param("id"), hour, now, admin: false });
+  if (!details) return c.json({ error: "Monitor not found." }, 404);
+  // Past hours change only when a run that spans them later recovers.
+  return c.json(details, 200, {
+    "Cache-Control": hour + 3600 <= now ? "public, max-age=300" : "public, max-age=30",
+  });
+});
+
 app.use("/api/admin/*", requireAdmin);
+app.use("/api/admin/*", async (c, next) => {
+  c.header("Cache-Control", "no-store");
+  await next();
+});
+
+app.get("/api/admin/monitors/:id/checks", async (c) => {
+  const now = Math.floor(Date.now() / 1000);
+  const hour = parseHour(c.req.query("hour"), now);
+  const details = await getHourDetails(c.env, { monitorId: c.req.param("id"), hour, now, admin: true });
+  return details ? c.json(details) : c.json({ error: "Monitor not found." }, 404);
+});
+
+app.get("/api/admin/incidents/:id", async (c) => {
+  const now = Math.floor(Date.now() / 1000);
+  const details = await getIncidentDetails(c.env, { incidentId: c.req.param("id"), now });
+  return details ? c.json(details) : c.json({ error: "Incident not found." }, 404);
+});
 
 app.get("/api/admin/config", (c) =>
   c.json({
@@ -148,6 +177,7 @@ app.delete("/api/admin/monitors/:id", async (c) => {
     ).bind(id),
     c.env.DB.prepare("DELETE FROM incidents WHERE monitor_id = ?1").bind(id),
     c.env.DB.prepare("DELETE FROM metrics_hourly WHERE monitor_id = ?1").bind(id),
+    c.env.DB.prepare("DELETE FROM check_runs WHERE monitor_id = ?1").bind(id),
     c.env.DB.prepare("DELETE FROM monitor_state WHERE monitor_id = ?1").bind(id),
     c.env.DB.prepare("DELETE FROM monitors WHERE id = ?1").bind(id),
     auditStatement(c.env, {

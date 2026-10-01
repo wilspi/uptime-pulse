@@ -9,6 +9,8 @@ import type {
   PublicStatusResponse,
 } from "../shared/types";
 
+import { CheckDetailsDialog, formatTime, type DetailSelection } from "./CheckDetailsDialog";
+
 const emptyMonitor: MonitorInput = {
   name: "",
   url: "https://",
@@ -81,7 +83,7 @@ export function App() {
       {error && <div className="notice error">{error}</div>}
 
       <section className="monitor-list" aria-label="Monitored services">
-        {status?.monitors.map((monitor) => <MonitorCard key={monitor.id} monitor={monitor} />)}
+        {status?.monitors.map((monitor) => <MonitorCard key={monitor.id} monitor={monitor} generatedAt={status.generatedAt} />)}
         {status && status.monitors.length === 0 && (
           <div className="empty-state">
             <h2>No services yet</h2>
@@ -98,8 +100,10 @@ export function App() {
   );
 }
 
-function MonitorCard({ monitor }: { monitor: PublicMonitor }) {
-  const recent = monitor.metrics.slice(-24);
+function MonitorCard({ monitor, generatedAt }: { monitor: PublicMonitor; generatedAt: number }) {
+  const [selection, setSelection] = useState<DetailSelection | null>(null);
+  const latestHour = Math.floor(generatedAt / 3600) * 3600;
+  const metrics = new Map(monitor.metrics.map((metric) => [metric.timestamp, metric]));
   return (
     <article className="monitor-card">
       <div className="monitor-heading">
@@ -114,18 +118,23 @@ function MonitorCard({ monitor }: { monitor: PublicMonitor }) {
       </div>
       <div className="pulse-strip" aria-label="Last 24 hours of hourly results">
         {Array.from({ length: 24 }, (_, index) => {
-          const metric = recent[index - (24 - recent.length)];
+          const hour = latestHour - (23 - index) * 3600;
+          const metric = metrics.get(hour);
           const ratio = metric && metric.checks > 0 ? metric.successes / metric.checks : null;
           const tone = ratio === null ? "empty" : ratio === 1 ? "good" : ratio >= 0.8 ? "warn" : "bad";
-          return <span className={tone} key={index} title={ratio === null ? "No data" : `${Math.round(ratio * 100)}% successful`} />;
+          const label = `${formatTime(hour)}: ${ratio === null ? "No checks recorded" : `${metric!.checks - metric!.successes} of ${metric!.checks} checks failed`}. View details`;
+          return <button type="button" className={tone} key={hour} title={label} aria-label={label} onClick={() => setSelection({ monitorId: monitor.id, hour })} />;
         })}
       </div>
+      <div className="strip-caption"><span>23 hours ago</span><span>Each block is 1 hour · Click for details</span><span>Current hour</span></div>
+      <div className="strip-legend"><span><i className="good" />All passed</span><span><i className="warn" />{"80–<100% passed"}</span><span><i className="bad" />Below 80% passed</span><span><i className="empty" />No checks</span></div>
       <div className="monitor-stats">
         <span><strong>{formatUptime(monitor.uptime30d)}</strong> 30-day uptime</span>
         <span><strong>{monitor.lastLatencyMs === null ? "—" : `${monitor.lastLatencyMs} ms`}</strong> response</span>
         <span><strong>{monitor.lastCheckedAt ? relativeTime(monitor.lastCheckedAt) : "Never"}</strong> last check</span>
       </div>
       {monitor.lastError && monitor.status !== "up" && <p className="monitor-error">{monitor.lastError}</p>}
+      {selection && <CheckDetailsDialog selection={selection} token={sessionStorage.getItem("pulse-admin-token") ?? undefined} onClose={() => setSelection(null)} />}
     </article>
   );
 }
@@ -136,6 +145,7 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
   const [monitors, setMonitors] = useState<AdminMonitor[]>([]);
   const [incidents, setIncidents] = useState<IncidentSummary[]>([]);
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [selection, setSelection] = useState<DetailSelection | null>(null);
   const [editing, setEditing] = useState<AdminMonitor | "new" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -232,6 +242,7 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
             <StatusBadge status={monitor.status} />
             <span className="hide-mobile">Every {monitor.intervalSeconds === 60 ? "minute" : `${monitor.intervalSeconds / 60} min`}</span>
             <div className="row-actions">
+              <button className="icon-button" onClick={() => setSelection({ monitorId: monitor.id, hour: Math.floor(Date.now() / 3_600_000) * 3600 })}>History</button>
               <button className="icon-button" disabled={busy} title="Check now" onClick={() => void act(() => request(`/api/admin/monitors/${monitor.id}/check`, { method: "POST" }), `Checked ${monitor.name}.`)}>↻</button>
               <button className="icon-button" title="Edit" onClick={() => setEditing(monitor)}>Edit</button>
               <button className="icon-button danger" disabled={busy} title="Delete" onClick={() => {
@@ -244,12 +255,13 @@ function AdminPanel({ onClose }: { onClose: () => void }) {
       </section>
 
       <section className="admin-columns">
-        <div><h2>Recent incidents</h2><div className="activity-card">{incidents.slice(0, 8).map((incident) => <div className="activity-row" key={incident.id}><span className={`status-dot ${incident.resolvedAt ? "up" : "down"}`} /><div><strong>{incident.monitorName}</strong><span>{incident.resolvedAt ? `Recovered ${relativeTime(incident.resolvedAt)}` : `Started ${relativeTime(incident.startedAt)}`}</span></div></div>)}{incidents.length === 0 && <p className="muted">No incidents recorded.</p>}</div></div>
+        <div><h2>Recent incidents</h2><div className="activity-card">{incidents.slice(0, 8).map((incident) => <button type="button" className="activity-row incident-button" key={incident.id} onClick={() => setSelection({ incidentId: incident.id })}><span className={`status-dot ${incident.resolvedAt ? "up" : "down"}`} /><div><strong>{incident.monitorName}</strong><span>{incident.resolvedAt ? `Recovered ${relativeTime(incident.resolvedAt)}` : `Started ${relativeTime(incident.startedAt)}`}</span><span>View details →</span></div></button>)}{incidents.length === 0 && <p className="muted">No incidents recorded.</p>}</div></div>
         <div><h2>Admin activity</h2><div className="activity-card">{logs.slice(0, 8).map((log) => <div className="activity-row" key={log.id}><span className="activity-mark" /><div><strong>{humanAction(log.action)}</strong><span>{relativeTime(log.createdAt)}</span></div></div>)}{logs.length === 0 && <p className="muted">No activity recorded.</p>}</div></div>
       </section>
 
       <SiteFooter />
 
+      {selection && <CheckDetailsDialog selection={selection} token={token} onClose={() => setSelection(null)} />}
       {editing && <MonitorDialog monitor={editing === "new" ? null : editing} busy={busy} onClose={() => setEditing(null)} onSave={(input) => void (async () => {
         const saved = await act(
           () => request(editing === "new" ? "/api/admin/monitors" : `/api/admin/monitors/${editing.id}`, { method: editing === "new" ? "POST" : "PUT", body: JSON.stringify(input) }),

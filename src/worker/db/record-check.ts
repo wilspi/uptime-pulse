@@ -1,7 +1,8 @@
 import type { MonitorStatus } from "../../shared/types";
 import { transitionMonitorState } from "../monitoring/state-machine";
 import type { CheckResult } from "../monitoring/checker";
-import type { MonitorRow, MonitorStateRow, OpenIncidentRow } from "./types";
+import { loadCheckContext } from "./check-context";
+import type { CheckContext, MonitorRow, OpenRunRow } from "./types";
 
 export interface RecordedCheck {
   previousStatus: Exclude<MonitorStatus, "paused">;
@@ -12,16 +13,11 @@ export async function recordCheck(
   env: Env,
   monitor: MonitorRow,
   result: CheckResult,
+  preloaded?: CheckContext,
 ): Promise<RecordedCheck> {
-  const current = await env.DB.prepare(
-    `SELECT monitor_id, status, last_checked_at, last_latency_ms, last_http_status,
-            last_error, consecutive_failures, consecutive_successes,
-            verification_started_at, changed_at
-       FROM monitor_state
-      WHERE monitor_id = ?1`,
-  )
-    .bind(monitor.id)
-    .first<MonitorStateRow>();
+  // The scheduler preloads context so each check costs one fetch and one D1 batch.
+  const { state: current, openRun, openIncident, verificationError } =
+    preloaded ?? (await loadCheckContext(env, monitor.id));
 
   const previousStatus = current?.status ?? "unknown";
   const next = transitionMonitorState(
@@ -35,7 +31,7 @@ export async function recordCheck(
     result.checkedAt,
   );
 
-  const statements: D1PreparedStatement[] = [];
+  const statements: D1PreparedStatement[] = runStatements(env, monitor, result, openRun);
   statements.push(
     env.DB.prepare(
       `INSERT INTO monitor_state (
@@ -100,27 +96,19 @@ export async function recordCheck(
     ),
   );
 
-  let openIncident: OpenIncidentRow | null = null;
-  if (next.openedIncident || next.resolvedIncident || next.status === "down") {
-    openIncident = await env.DB.prepare(
-      `SELECT id, monitor_id, started_at
-         FROM incidents
-        WHERE monitor_id = ?1 AND resolved_at IS NULL
-        LIMIT 1`,
-    )
-      .bind(monitor.id)
-      .first<OpenIncidentRow>();
-  }
-
   if (next.openedIncident && !openIncident) {
     const incidentId = crypto.randomUUID();
     const startedAt = next.verificationStartedAt ?? result.checkedAt;
+    // The run that began verification holds the first error rather than the confirming one.
+    const initialError = openRun?.started_at === startedAt
+      ? openRun.error
+      : (verificationError ?? result.error);
     statements.push(
       env.DB.prepare(
         `INSERT INTO incidents (
            id, monitor_id, started_at, resolved_at, initial_error, last_error, created_at
-         ) VALUES (?1, ?2, ?3, NULL, ?4, ?4, ?5)`,
-      ).bind(incidentId, monitor.id, startedAt, result.error, result.checkedAt),
+         ) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6)`,
+      ).bind(incidentId, monitor.id, startedAt, initialError, result.error, result.checkedAt),
       env.DB.prepare(
         `INSERT INTO notifications (
            id, incident_id, kind, subject, body, status, attempts,
@@ -147,7 +135,7 @@ export async function recordCheck(
     const durationSeconds = Math.max(0, result.checkedAt - openIncident.started_at);
     statements.push(
       env.DB.prepare(
-        "UPDATE incidents SET resolved_at = ?1, last_error = NULL WHERE id = ?2",
+        "UPDATE incidents SET resolved_at = ?1 WHERE id = ?2",
       ).bind(result.checkedAt, openIncident.id),
       env.DB.prepare(
         `INSERT INTO notifications (
@@ -174,6 +162,60 @@ export async function recordCheck(
   });
 
   return { previousStatus, currentStatus: next.status };
+}
+
+// Failed checks are stored as runs of the same cause, so healthy monitors add no writes.
+function runStatements(
+  env: Env,
+  monitor: MonitorRow,
+  result: CheckResult,
+  openRun: OpenRunRow | null,
+): D1PreparedStatement[] {
+  if (result.successful) {
+    return openRun
+      ? [env.DB.prepare("UPDATE check_runs SET recovered_at = ?1 WHERE id = ?2").bind(result.checkedAt, openRun.id)]
+      : [];
+  }
+
+  if (
+    openRun &&
+    openRun.failure_kind === result.failureKind &&
+    openRun.http_status === result.httpStatus &&
+    openRun.error === result.error
+  ) {
+    return [
+      env.DB.prepare(
+        `UPDATE check_runs SET
+           ended_at = ?1,
+           failed_checks = failed_checks + 1,
+           total_latency_ms = total_latency_ms + ?2,
+           max_latency_ms = MAX(max_latency_ms, ?2)
+         WHERE id = ?3`,
+      ).bind(result.checkedAt, result.latencyMs, openRun.id),
+    ];
+  }
+
+  return [
+    env.DB.prepare(
+      `INSERT INTO check_runs (
+         monitor_id, started_at, ended_at, failure_kind, http_status, error,
+         total_latency_ms, max_latency_ms, response_body, response_headers,
+         expected_status_min, expected_status_max, timeout_ms
+       ) VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8, ?9, ?10, ?11)`,
+    ).bind(
+      monitor.id,
+      result.checkedAt,
+      result.failureKind ?? "network",
+      result.httpStatus,
+      result.error,
+      result.latencyMs,
+      result.responseBody,
+      JSON.stringify(result.responseHeaders),
+      monitor.expected_status_min,
+      monitor.expected_status_max,
+      monitor.timeout_ms,
+    ),
+  ];
 }
 
 function downMessage(

@@ -55,7 +55,7 @@ export async function getPublicStatus(env: Env, now: number): Promise<PublicStat
         WHERE bucket_start >= ?1
         ORDER BY bucket_start ASC`,
     )
-      .bind(now - TWENTY_FOUR_HOURS)
+      .bind(Math.floor(now / 3600) * 3600 - TWENTY_FOUR_HOURS + 3600)
       .all<MetricRow>(),
     env.DB.prepare(
       `SELECT monitor_id, started_at, resolved_at

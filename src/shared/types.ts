@@ -80,3 +80,67 @@ export interface AuditLogEntry {
   actorIp: string | null;
   createdAt: number;
 }
+
+export type FailureKind = "http" | "timeout" | "network" | "keyword" | "body";
+
+/** Consecutive failed checks that shared one cause. */
+export interface FailureRun {
+  id: number;
+  startedAt: number;
+  endedAt: number;
+  /** First passing check after the run, when the run ended in recovery. */
+  passedAt: number | null;
+  /** Whether the run ended with a passing check, a different failure, or is still failing. */
+  outcome: "passed" | "changed" | "ongoing";
+  failureKind: FailureKind;
+  httpStatus: number | null;
+  reason: string;
+  failedChecks: number;
+  averageLatencyMs: number;
+  maxLatencyMs: number;
+  // Admin only.
+  error?: string | null;
+  responseBody?: string | null;
+  responseHeaders?: Record<string, string>;
+  expectedStatusMin?: number;
+  expectedStatusMax?: number;
+  timeoutMs?: number;
+}
+
+export interface AlertDelivery {
+  kind: "down" | "recovered";
+  status: "pending" | "sent" | "failed";
+  attempts: number;
+  sentAt: number | null;
+  error: string | null;
+}
+
+export interface IncidentDetail extends IncidentSummary {
+  /** When the third consecutive failure confirmed the outage. */
+  confirmedAt: number;
+  alerts?: AlertDelivery[];
+}
+
+export interface ConfigChange {
+  action: string;
+  details: string | null;
+  createdAt: number;
+}
+
+export interface CheckDetailsResponse {
+  monitorName: string;
+  from: number;
+  to: number;
+  generatedAt: number;
+  /** Null for incident windows, which are not aligned to hourly counts. */
+  totalChecks: number | null;
+  successfulChecks: number | null;
+  failedChecks: number;
+  latency: { averageMs: number | null; minMs: number | null; maxMs: number | null } | null;
+  /** Confirmed incident time inside the window. */
+  downtimeSeconds: number;
+  runs: FailureRun[];
+  runsTruncated: boolean;
+  incidents: IncidentDetail[];
+  configChanges?: ConfigChange[];
+}

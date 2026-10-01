@@ -1,4 +1,4 @@
-import { cloudflareTest } from "@cloudflare/vitest-plugin";
+import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -7,6 +7,7 @@ export default defineConfig({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
         bindings: {
+          TEST_MIGRATIONS: await readD1Migrations("./migrations"),
           SITE_NAME: "Uptime Pulse Test",
           SMTP_HOST: "smtp.example.com",
           SMTP_PORT: "465",

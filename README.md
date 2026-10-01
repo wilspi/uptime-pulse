@@ -111,7 +111,7 @@ Only one recipient is supported by design. Keeping SMTP credentials in Worker se
 
 ## Cost and limits
 
-The default ceiling of 20 monitors is an application safety guard. At one-minute intervals that is at most 28,800 outbound checks per day, plus 1,440 scheduled invocations. Hourly aggregation avoids storing every response as a database row. Before raising the ceiling, compare your actual Workers requests, CPU, subrequests, and D1 row usage with Cloudflare's current free-plan limits.
+The default ceiling of 20 monitors is an application safety guard. At one-minute intervals that is at most 28,800 outbound checks per day, plus 1,440 scheduled invocations. Hourly aggregation avoids storing every response as a database row. Failure diagnostics are stored as runs of consecutive failures with the same cause, so healthy monitors add no extra D1 writes; an outage costs about one write per failed check. Hourly aggregates and failure runs are retained for 90 days. Each scheduled check uses two subrequests (the HTTP check and one D1 batch), keeping a run of 20 monitors under the free plan's 50-subrequest limit; monitors that follow redirects are budgeted extra, and any that do not fit are checked first in the next minute. Before raising the ceiling, compare your actual Workers requests, CPU, subrequests, and D1 row usage with Cloudflare's current free-plan limits.
 
 The status response is browser-cacheable for 30 seconds. Admin requests are never exposed by the public API. Cloudflare structured logs record request metadata and scheduler events; D1 stores the last 100 admin audit entries shown in the dashboard.
 
@@ -130,3 +130,11 @@ npm run deploy              # build and deploy
 ## License
 
 Uptime Pulse is available under the [MIT License](LICENSE).
+
+## Downtime diagnostics
+
+Click any hourly block to see why it is green (all checks passed), yellow (at least 80% but fewer than 100% passed), red (fewer than 80% passed), or gray (no checks). Blocks are fixed hourly windows, including the current partial hour. Details include check counts, response times (average, fastest, slowest), confirmed downtime in the hour, and a timeline of what failed: each run of consecutive failures with the same cause, how many checks it covered, and when checks passed again. Yellow blocks without a confirmed incident are called out as brief or intermittent failures. Times use the browser's local timezone. Counts describe monitoring checks, not customer traffic.
+
+Sign in through Manage and reopen a block for raw errors, expected status and timeout, selected diagnostic headers, and a response excerpt from the first failure of each run. Admins also see when down and recovery alerts were emailed (or why they failed) and any monitor changes made in that hour. Admin monitor rows offer History, and recent incidents open their full timeline, including when the outage was confirmed. Public endpoints never include response bodies, raw errors, cookies, monitor settings, or private endpoint paths. Response excerpts may contain sensitive service data, so access requires the admin token. Binary bodies and successful response bodies are not saved.
+
+Apply migration `0002_check_history.sql` before deploying this version (`npm run db:migrate:remote`). Hours before the migration still show their counts, but not failure details.

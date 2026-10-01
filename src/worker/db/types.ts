@@ -1,4 +1,4 @@
-import type { MonitorMethod, MonitorStatus } from "../../shared/types";
+import type { FailureKind, MonitorMethod, MonitorStatus } from "../../shared/types";
 
 export interface MonitorRow {
   id: string;
@@ -33,4 +33,20 @@ export interface OpenIncidentRow {
   id: string;
   monitor_id: string;
   started_at: number;
+}
+
+export interface OpenRunRow {
+  id: number;
+  started_at: number;
+  failure_kind: FailureKind;
+  http_status: number | null;
+  error: string | null;
+}
+
+export interface CheckContext {
+  state: MonitorStateRow | null;
+  openRun: OpenRunRow | null;
+  openIncident: OpenIncidentRow | null;
+  /** Error of the run that began the current verification window, if it has one. */
+  verificationError: string | null;
 }
